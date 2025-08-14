@@ -1,0 +1,11 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.3
+structlog==24.1.0
+prometheus_client==0.20.0
+pydantic==2.8.2
+httpx==0.27.0
+pynvml==11.5.0
+orjson==3.10.7
+# vLLM 建议使用官方 Docker 镜像运行；如需本地安装，请匹配 CUDA/torch 版本
+vllm>=0.4.0
+

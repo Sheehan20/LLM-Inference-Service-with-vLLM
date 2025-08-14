@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    image: vllm-phi2-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-microsoft/phi-2}
+      - TOKENIZER=${TOKENIZER:-}
+      - CONCURRENCY_LIMIT=${CONCURRENCY_LIMIT:-20}
+      - MAX_NUM_SEQS=${MAX_NUM_SEQS:-32}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-2048}
+      - GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.90}
+      - MICROBATCH_WAIT_MS=${MICROBATCH_WAIT_MS:-8}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
