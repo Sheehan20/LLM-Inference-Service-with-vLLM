@@ -10,6 +10,8 @@ import structlog
 
 from app.config import Settings
 from app.metrics import GENERATED_TOKENS
+from app.resilience import with_circuit_breaker, CircuitBreakerConfig, get_resilience_manager
+from app.errors import InferenceError, ResourceExhaustedError
 
 
 class EngineManager:
@@ -18,6 +20,15 @@ class EngineManager:
         self.logger = logger
         self._engine = None
         self._semaphore = asyncio.Semaphore(self.settings.concurrency_limit)
+        
+        # Initialize resilience patterns
+        self.resilience_manager = get_resilience_manager()
+        self.circuit_breaker_config = CircuitBreakerConfig(
+            failure_threshold=5,
+            recovery_timeout=60,
+            success_threshold=3,
+            timeout=30
+        )
 
     async def init_engine(self) -> None:
         t0 = time.perf_counter()
@@ -64,7 +75,7 @@ class EngineManager:
         )
         return sampling_params
 
-    async def generate_text(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> dict:
+    async def generate_text(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> dict:\n        # Use circuit breaker for resilience\n        return await with_circuit_breaker(\n            \"text_generation\",\n            self._generate_text_impl,\n            prompt=prompt,\n            max_tokens=max_tokens,\n            temperature=temperature,\n            top_p=top_p,\n            top_k=top_k,\n            stop=stop,\n            repetition_penalty=repetition_penalty\n        )\n    \n    async def _generate_text_impl(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> dict:
         if self.settings.microbatch_wait_ms > 0:
             await asyncio.sleep(self.settings.microbatch_wait_ms / 1000.0)
 
@@ -89,7 +100,7 @@ class EngineManager:
                 last_output = request_output
 
             if last_output is None:
-                raise RuntimeError("Empty generation output")
+                raise InferenceError("Empty generation output")
 
             output = last_output.outputs[0]
             text = output.text

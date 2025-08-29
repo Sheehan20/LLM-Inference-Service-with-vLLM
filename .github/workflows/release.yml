@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      tag_name: ${{ steps.get_version.outputs.tag_name }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Get version from tag
+      id: get_version
+      run: |
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+        echo "version=${TAG_NAME#v}" >> $GITHUB_OUTPUT
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from git commits
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        if [ -n "$PREVIOUS_TAG" ]; then
+          CHANGELOG=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s" --no-merges)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+        fi
+        
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.tag_name }}
+        release_name: Release ${{ steps.get_version.outputs.tag_name }}
+        body: |
+          ## Changes in ${{ steps.get_version.outputs.tag_name }}
+          
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ## Docker Image
+          
+          ```bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.version }}
+          ```
+          
+          ## Quick Start
+          
+          ```bash
+          docker run --gpus all -p 8000:8000 \
+            -e MODEL_NAME=microsoft/phi-2 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.version }}
+          ```
+          
+          See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
+        draft: false
+        prerelease: ${{ contains(steps.get_version.outputs.tag_name, '-') }}
+
+  build-release-assets:
+    name: Build Release Assets
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Create source distribution
+      run: |
+        python -m pip install --upgrade pip build
+        python -m build --sdist
+    
+    - name: Create deployment package
+      run: |
+        mkdir -p deployment/
+        cp -r app/ deployment/
+        cp requirements.txt deployment/
+        cp docker-compose.yml deployment/
+        cp Dockerfile deployment/
+        cp -r scripts/ deployment/
+        
+        # Create deployment README
+        cat > deployment/README.md << 'EOF'
+        # vLLM Inference Service Deployment Package
+        
+        This package contains everything needed to deploy the vLLM Inference Service.
+        
+        ## Contents
+        - `app/` - Application source code
+        - `requirements.txt` - Python dependencies
+        - `docker-compose.yml` - Docker Compose configuration
+        - `Dockerfile` - Docker image definition
+        - `scripts/` - Utility scripts
+        
+        ## Quick Deploy
+        
+        ```bash
+        # Using Docker Compose
+        docker-compose up -d
+        
+        # Or build and run manually
+        docker build -t vllm-inference .
+        docker run --gpus all -p 8000:8000 -e MODEL_NAME=microsoft/phi-2 vllm-inference
+        ```
+        EOF
+        
+        tar -czf deployment-package.tar.gz deployment/
+    
+    - name: Upload source distribution
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: dist/*.tar.gz
+        asset_name: source-distribution.tar.gz
+        asset_content_type: application/gzip
+    
+    - name: Upload deployment package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: deployment-package.tar.gz
+        asset_name: deployment-package.tar.gz
+        asset_content_type: application/gzip
+
+  publish-image:
+    name: Publish Release Image
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Build and push release image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        labels: |
+          org.opencontainers.image.title=vLLM Inference Service
+          org.opencontainers.image.description=High-performance LLM inference API
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [create-release, build-release-assets, publish-image]
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: needs.create-release.result == 'success' && needs.build-release-assets.result == 'success' && needs.publish-image.result == 'success'
+      run: |
+        echo "🎉 Release ${{ needs.create-release.outputs.tag_name }} published successfully!"
+        # Add notification logic (Slack, Discord, email, etc.)
+    
+    - name: Notify failure
+      if: needs.create-release.result == 'failure' || needs.build-release-assets.result == 'failure' || needs.publish-image.result == 'failure'
+      run: |
+        echo "❌ Release ${{ needs.create-release.outputs.tag_name }} failed!"
+        # Add failure notification logic
