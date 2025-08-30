@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-def run_command(cmd, description, check=True, capture_output=False):
+def run_command(cmd: str, description: str, check: bool = True, capture_output: bool = False) -> bool | str:
     """Run a shell command with error handling."""
     try:
         print(f"[*] {description}...")
@@ -42,7 +42,7 @@ def run_command(cmd, description, check=True, capture_output=False):
         return False
 
 
-def setup_dev():
+def setup_dev() -> bool:
     """Set up development environment."""
     print("Setting up development environment...")
 
@@ -62,7 +62,7 @@ def setup_dev():
     return True
 
 
-def lint():
+def lint() -> bool:
     """Run linting tools."""
     print("Running code quality checks...")
 
@@ -81,7 +81,7 @@ def lint():
     return success
 
 
-def format_code():
+def format_code() -> None:
     """Format code using ruff."""
     commands = [
         ("ruff format app/ tests/", "Formatting code with ruff"),
@@ -93,7 +93,7 @@ def format_code():
         run_command(cmd, desc, check=False)
 
 
-def test(coverage=True, verbose=False):
+def test(coverage: bool = True, verbose: bool = False) -> bool:
     """Run tests."""
     cmd = "pytest tests/"
 
@@ -106,7 +106,7 @@ def test(coverage=True, verbose=False):
     return run_command(cmd, "Running tests")
 
 
-def build_docker():
+def build_docker() -> bool:
     """Build Docker image."""
     tag = "vllm-inference:dev"
     cmd = f"docker build -t {tag} ."
@@ -117,7 +117,7 @@ def build_docker():
     return False
 
 
-def run_docker():
+def run_docker() -> bool:
     """Run Docker container locally."""
     if not build_docker():
         return False
@@ -140,7 +140,7 @@ def run_docker():
         return True
 
 
-def load_test(concurrency=10, requests=100):
+def load_test(concurrency: int = 10, requests: int = 100) -> bool:
     """Run load test."""
     cmd = f"""python scripts/load_test.py \
         --url http://localhost:8000/v1/generate \
@@ -152,7 +152,7 @@ def load_test(concurrency=10, requests=100):
     return run_command(cmd, f"Running load test ({requests} requests, {concurrency} concurrent)")
 
 
-def clean():
+def clean() -> None:
     """Clean up build artifacts and cache."""
     commands = [
         ("find . -type d -name __pycache__ -exec rm -rf {} +", "Removing Python cache"),
@@ -169,7 +169,7 @@ def clean():
         run_command(cmd, desc, check=False)
 
 
-def security_scan():
+def security_scan() -> bool:
     """Run comprehensive security scan."""
     commands = [
         ("safety check", "Checking dependencies for vulnerabilities"),
@@ -188,7 +188,7 @@ def security_scan():
     return success
 
 
-def main():
+def main() -> None:
     """Main CLI interface."""
     parser = argparse.ArgumentParser(description="vLLM Inference Service Development Tool")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")

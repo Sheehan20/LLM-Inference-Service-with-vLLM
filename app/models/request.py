@@ -30,14 +30,14 @@ class GenerateRequest(BaseModel):
 
     @field_validator("prompt")
     @classmethod
-    def validate_prompt(cls, v):
+    def validate_prompt(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Prompt cannot be empty or whitespace only")
         return v.strip()
 
     @field_validator("stop")
     @classmethod
-    def validate_stop_sequences(cls, v):
+    def validate_stop_sequences(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
             # Remove empty strings and limit length
             valid_stops = [s for s in v if s and len(s) <= 50]
@@ -48,7 +48,7 @@ class GenerateRequest(BaseModel):
 
     @field_validator("top_k")
     @classmethod
-    def validate_top_k(cls, v):
+    def validate_top_k(cls, v: int) -> int:
         if v != -1 and v <= 0:
             raise ValueError("top_k must be -1 (disabled) or positive integer")
         return v

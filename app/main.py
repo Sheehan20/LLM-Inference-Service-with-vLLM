@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.alerting import get_alert_manager
@@ -30,7 +30,7 @@ from app.metrics import (
 )
 from app.models.request import GenerateRequest
 from app.models.response import GenerateResponse
-from app.resilience import get_resilience_manager
+from app.resilience import get_resilience_manager, CircuitState
 
 logger = structlog.get_logger()
 
@@ -89,7 +89,7 @@ def get_manager(request: Request) -> EngineManager:
 
 
 @app.middleware("http")
-async def access_log_middleware(request: Request, call_next):
+async def access_log_middleware(request: Request, call_next) -> Response:
     start = time.perf_counter()
     try:
         response = await call_next(request)
@@ -133,7 +133,7 @@ async def healthz(request: Request) -> dict:
         if health_info.get("status") == "healthy":
             set_health_status("engine", True)
 
-        return health_info
+        return health_info  # type: ignore
     except Exception as e:
         logger.exception("Health check failed", error=str(e))
         set_health_status("api", False)
@@ -270,7 +270,7 @@ async def detailed_health(request: Request) -> dict:
     if not health_checker:
         return {"error": "Health checker not available"}
 
-    return await health_checker.run_health_checks(engine_manager)
+    return await health_checker.run_health_checks(engine_manager)  # type: ignore
 
 
 @app.get("/auth/info")
@@ -292,7 +292,7 @@ async def get_rate_limit_stats(client_id: str, request: Request) -> dict:
     if not auth_middleware:
         return {"error": "Auth middleware not available"}
 
-    return auth_middleware.rate_limiter.get_stats(client_id)
+    return auth_middleware.rate_limiter.get_stats(client_id)  # type: ignore
 
 
 @app.get("/resilience/stats")
@@ -308,7 +308,7 @@ async def reset_circuit_breaker(name: str) -> dict:
     resilience_manager = get_resilience_manager()
     if name in resilience_manager.circuit_breakers:
         circuit_breaker = resilience_manager.circuit_breakers[name]
-        circuit_breaker.state = circuit_breaker.CircuitState.CLOSED
+        circuit_breaker.state = CircuitState.CLOSED
         circuit_breaker.failure_count = 0
         circuit_breaker.success_count = 0
         logger.info(f"Circuit breaker {name} reset to CLOSED state")

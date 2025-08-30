@@ -211,7 +211,7 @@ class TokensPerSecondTracker:
 
     def __init__(self, window_seconds: int = 60):
         self.window_seconds = window_seconds
-        self.tokens = []
+        self.tokens: list[tuple[float, int]] = []
         self.lock = threading.Lock()
 
     def add_tokens(self, count: int) -> None:
@@ -254,7 +254,7 @@ def update_tokens_per_second_metric() -> None:
 def start_tokens_per_second_updater(update_interval_seconds: float = 5.0) -> None:
     """Start background thread to update tokens per second metric."""
 
-    def _update_loop():
+    def _update_loop() -> None:
         while True:
             try:
                 update_tokens_per_second_metric()
