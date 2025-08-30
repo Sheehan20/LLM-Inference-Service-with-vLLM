@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import threading
 import time
+
 import psutil
-from typing import Optional
-
-from prometheus_client import Counter, Gauge, Histogram, make_asgi_app, Info
-
+from prometheus_client import Counter, Gauge, Histogram, Info, make_asgi_app
 
 REQUEST_COUNTER = Counter(
     "inference_requests_total",
@@ -121,10 +119,10 @@ metrics_app = make_asgi_app()
 def start_system_metrics_poller(poll_interval_seconds: float = 2.0) -> None:
     """Start polling for system metrics including GPU, CPU, and memory."""
     thread = threading.Thread(
-        target=_poll_system_metrics, 
+        target=_poll_system_metrics,
         args=(poll_interval_seconds,),
-        name="system-metrics-poller", 
-        daemon=True
+        name="system-metrics-poller",
+        daemon=True,
     )
     thread.start()
 
@@ -150,18 +148,22 @@ def start_gpu_metrics_poller(poll_interval_seconds: float = 2.0) -> None:
                         util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                         mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
                         temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-                        
+
                         GPU_UTILIZATION.labels(gpu_index=str(i)).set(util.gpu)
                         GPU_MEM_USED.labels(gpu_index=str(i)).set(mem.used)
                         GPU_MEM_TOTAL.labels(gpu_index=str(i)).set(mem.total)
                         GPU_TEMPERATURE.labels(gpu_index=str(i)).set(temp)
                     except Exception:
+                        # Log GPU metric collection failure but continue with other GPUs
+                        # Skip logging to avoid issues with missing logger in thread
                         continue
                 time.sleep(poll_interval_seconds)
         finally:
             try:
                 pynvml.nvmlShutdown()
             except Exception:
+                # Log NVML shutdown failure, but it's not critical
+                # Skip logging to avoid issues with missing logger in thread
                 pass
 
     thread = threading.Thread(target=_poll, name="gpu-metrics-poller", daemon=True)
@@ -174,13 +176,13 @@ def _poll_system_metrics(poll_interval_seconds: float) -> None:
         try:
             # CPU utilization
             CPU_UTILIZATION.set(psutil.cpu_percent(interval=1))
-            
+
             # Memory usage
             memory = psutil.virtual_memory()
             MEMORY_USAGE.labels(type="used").set(memory.used)
             MEMORY_USAGE.labels(type="available").set(memory.available)
             MEMORY_USAGE.labels(type="total").set(memory.total)
-            
+
             time.sleep(poll_interval_seconds)
         except Exception:
             time.sleep(poll_interval_seconds)
@@ -188,12 +190,9 @@ def _poll_system_metrics(poll_interval_seconds: float) -> None:
 
 def update_service_info(model_name: str, version: str = "0.1.0") -> None:
     """Update service information metrics."""
-    SERVICE_INFO.info({
-        "model_name": model_name,
-        "version": version,
-        "framework": "vllm",
-        "api_version": "v1"
-    })
+    SERVICE_INFO.info(
+        {"model_name": model_name, "version": version, "framework": "vllm", "api_version": "v1"}
+    )
 
 
 def set_health_status(component: str, healthy: bool) -> None:
@@ -209,12 +208,12 @@ def record_request_metrics(prompt_length: int, response_length: int) -> None:
 
 class TokensPerSecondTracker:
     """Track tokens per second generation rate."""
-    
+
     def __init__(self, window_seconds: int = 60):
         self.window_seconds = window_seconds
         self.tokens = []
         self.lock = threading.Lock()
-    
+
     def add_tokens(self, count: int) -> None:
         """Add generated tokens with timestamp."""
         now = time.time()
@@ -223,23 +222,23 @@ class TokensPerSecondTracker:
             # Remove old entries
             cutoff = now - self.window_seconds
             self.tokens = [(ts, cnt) for ts, cnt in self.tokens if ts > cutoff]
-    
+
     def get_tokens_per_second(self) -> float:
         """Get current tokens per second rate."""
         with self.lock:
             if not self.tokens:
                 return 0.0
-            
+
             now = time.time()
             cutoff = now - self.window_seconds
             recent_tokens = [(ts, cnt) for ts, cnt in self.tokens if ts > cutoff]
-            
+
             if not recent_tokens:
                 return 0.0
-            
+
             total_tokens = sum(cnt for _, cnt in recent_tokens)
             time_span = now - recent_tokens[0][0] if len(recent_tokens) > 1 else self.window_seconds
-            
+
             return total_tokens / max(time_span, 1.0)
 
 
@@ -254,6 +253,7 @@ def update_tokens_per_second_metric() -> None:
 
 def start_tokens_per_second_updater(update_interval_seconds: float = 5.0) -> None:
     """Start background thread to update tokens per second metric."""
+
     def _update_loop():
         while True:
             try:
@@ -261,8 +261,6 @@ def start_tokens_per_second_updater(update_interval_seconds: float = 5.0) -> Non
                 time.sleep(update_interval_seconds)
             except Exception:
                 time.sleep(update_interval_seconds)
-    
+
     thread = threading.Thread(target=_update_loop, name="tokens-per-second-updater", daemon=True)
     thread.start()
-
-

@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
 import orjson
 import structlog
 
 from app.config import Settings
+from app.errors import InferenceError
 from app.metrics import GENERATED_TOKENS
-from app.resilience import with_circuit_breaker, CircuitBreakerConfig, get_resilience_manager
-from app.errors import InferenceError, ResourceExhaustedError
+from app.resilience import CircuitBreakerConfig, get_resilience_manager, with_circuit_breaker
 
 
 class EngineManager:
@@ -20,14 +20,11 @@ class EngineManager:
         self.logger = logger
         self._engine = None
         self._semaphore = asyncio.Semaphore(self.settings.concurrency_limit)
-        
+
         # Initialize resilience patterns
         self.resilience_manager = get_resilience_manager()
         self.circuit_breaker_config = CircuitBreakerConfig(
-            failure_threshold=5,
-            recovery_timeout=60,
-            success_threshold=3,
-            timeout=30
+            failure_threshold=5, recovery_timeout=60, success_threshold=3, timeout=30
         )
 
     async def init_engine(self) -> None:
@@ -35,6 +32,7 @@ class EngineManager:
         try:
             # Import lazily to speed up cold start
             from vllm import AsyncLLMEngine
+
             try:
                 from vllm.engine.arg_utils import AsyncEngineArgs as EngineArgs  # type: ignore
             except Exception:
@@ -62,7 +60,16 @@ class EngineManager:
             self.logger.exception("engine_init_failed", error=str(e))
             raise
 
-    def _build_sampling_params(self, *, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float):
+    def _build_sampling_params(
+        self,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        stop: list[str] | None,
+        repetition_penalty: float,
+    ):
         from vllm import SamplingParams
 
         sampling_params = SamplingParams(
@@ -75,13 +82,48 @@ class EngineManager:
         )
         return sampling_params
 
-    async def generate_text(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> dict:\n        # Use circuit breaker for resilience\n        return await with_circuit_breaker(\n            \"text_generation\",\n            self._generate_text_impl,\n            prompt=prompt,\n            max_tokens=max_tokens,\n            temperature=temperature,\n            top_p=top_p,\n            top_k=top_k,\n            stop=stop,\n            repetition_penalty=repetition_penalty\n        )\n    \n    async def _generate_text_impl(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> dict:
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        stop: list[str] | None,
+        repetition_penalty: float,
+    ) -> dict:
+        # Use circuit breaker for resilience
+        return await with_circuit_breaker(
+            "text_generation",
+            self._generate_text_impl,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            stop=stop,
+            repetition_penalty=repetition_penalty,
+        )
+
+    async def _generate_text_impl(
+        self,
+        *,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        stop: list[str] | None,
+        repetition_penalty: float,
+    ) -> dict:
         if self.settings.microbatch_wait_ms > 0:
             await asyncio.sleep(self.settings.microbatch_wait_ms / 1000.0)
 
         await self._semaphore.acquire()
         try:
-            assert self._engine is not None
+            if self._engine is None:
+                raise InferenceError("Engine is not initialized")
             sampling_params = self._build_sampling_params(
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -121,14 +163,24 @@ class EngineManager:
         finally:
             self._semaphore.release()
 
-    async def stream_text(self, *, prompt: str, max_tokens: int, temperature: float, top_p: float, top_k: int, stop: Optional[list[str]], repetition_penalty: float) -> AsyncGenerator[bytes, None]:
+    async def stream_text(
+        self,
+        *,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        stop: list[str] | None,
+        repetition_penalty: float,
+    ) -> AsyncGenerator[bytes, None]:
         if self.settings.microbatch_wait_ms > 0:
             await asyncio.sleep(self.settings.microbatch_wait_ms / 1000.0)
 
         await self._semaphore.acquire()
         try:
-            assert self._engine is not None
-            from vllm import SamplingParams
+            if self._engine is None:
+                raise InferenceError("Engine is not initialized")
 
             sampling_params = self._build_sampling_params(
                 max_tokens=max_tokens,
@@ -155,8 +207,10 @@ class EngineManager:
             # end event
             final_tokens = prev_len  # approximate
             GENERATED_TOKENS.inc(final_tokens)
-            yield b"data: " + orjson.dumps({"event": "end", "generated_chars": final_tokens}) + b"\n\n"
+            yield (
+                b"data: "
+                + orjson.dumps({"event": "end", "generated_chars": final_tokens})
+                + b"\n\n"
+            )
         finally:
             self._semaphore.release()
-
-

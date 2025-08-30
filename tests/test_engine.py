@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import structlog
+
 from app.config import Settings
 from app.inference.engine import EngineManager
-import structlog
 
 
 @pytest.fixture
@@ -32,14 +34,14 @@ class TestEngineManager:
     async def test_init_engine_success(self, engine_manager):
         mock_engine = AsyncMock()
         mock_engine_args = MagicMock()
-        
+
         with patch("app.inference.engine.AsyncLLMEngine") as mock_async_engine:
             with patch("app.inference.engine.EngineArgs") as mock_args:
                 mock_args.return_value = mock_engine_args
                 mock_async_engine.from_engine_args.return_value = mock_engine
-                
+
                 await engine_manager.init_engine()
-                
+
                 assert engine_manager._engine is mock_engine
                 mock_args.assert_called_once()
                 mock_async_engine.from_engine_args.assert_called_once_with(mock_engine_args)
@@ -49,7 +51,7 @@ class TestEngineManager:
         with patch("app.inference.engine.AsyncLLMEngine") as mock_async_engine:
             with patch("app.inference.engine.EngineArgs"):
                 mock_async_engine.from_engine_args.side_effect = RuntimeError("GPU not found")
-                
+
                 with pytest.raises(RuntimeError, match="GPU not found"):
                     await engine_manager.init_engine()
 
@@ -61,21 +63,21 @@ class TestEngineManager:
         mock_output.text = "Generated text"
         mock_output.token_ids = [1, 2, 3, 4]
         mock_output.finish_reason = "stop"
-        
+
         mock_request_output = MagicMock()
         mock_request_output.outputs = [mock_output]
         mock_request_output.prompt_token_ids = [1, 2]
-        
+
         async def mock_generate(*args, **kwargs):
             yield mock_request_output
-            
+
         mock_engine.generate = mock_generate
         engine_manager._engine = mock_engine
-        
+
         with patch("app.inference.engine.SamplingParams") as mock_sampling:
             with patch("app.inference.engine.GENERATED_TOKENS") as mock_counter:
                 mock_sampling.return_value = MagicMock()
-                
+
                 result = await engine_manager.generate_text(
                     prompt="Test prompt",
                     max_tokens=50,
@@ -83,9 +85,9 @@ class TestEngineManager:
                     top_p=0.9,
                     top_k=50,
                     stop=None,
-                    repetition_penalty=1.0
+                    repetition_penalty=1.0,
                 )
-                
+
                 assert result["text"] == "Generated text"
                 assert result["num_prompt_tokens"] == 2
                 assert result["num_generated_tokens"] == 4
@@ -96,15 +98,15 @@ class TestEngineManager:
     @pytest.mark.asyncio
     async def test_generate_text_empty_output(self, engine_manager):
         mock_engine = AsyncMock()
-        
+
         async def mock_generate(*args, **kwargs):
             # Return empty generator
             return
             yield  # unreachable
-            
+
         mock_engine.generate = mock_generate
         engine_manager._engine = mock_engine
-        
+
         with patch("app.inference.engine.SamplingParams"):
             with pytest.raises(RuntimeError, match="Empty generation output"):
                 await engine_manager.generate_text(
@@ -114,7 +116,7 @@ class TestEngineManager:
                     top_p=0.9,
                     top_k=50,
                     stop=None,
-                    repetition_penalty=1.0
+                    repetition_penalty=1.0,
                 )
 
     @pytest.mark.asyncio
@@ -124,19 +126,19 @@ class TestEngineManager:
         mock_output1.text = "Hello"
         mock_output2 = MagicMock()
         mock_output2.text = "Hello world"
-        
+
         mock_request_output1 = MagicMock()
         mock_request_output1.outputs = [mock_output1]
         mock_request_output2 = MagicMock()
         mock_request_output2.outputs = [mock_output2]
-        
+
         async def mock_generate(*args, **kwargs):
             yield mock_request_output1
             yield mock_request_output2
-            
+
         mock_engine.generate = mock_generate
         engine_manager._engine = mock_engine
-        
+
         with patch("app.inference.engine.SamplingParams"):
             with patch("app.inference.engine.GENERATED_TOKENS") as mock_counter:
                 chunks = []
@@ -147,10 +149,10 @@ class TestEngineManager:
                     top_p=0.9,
                     top_k=50,
                     stop=None,
-                    repetition_penalty=1.0
+                    repetition_penalty=1.0,
                 ):
                     chunks.append(chunk)
-                
+
                 # Should get delta chunk and end event
                 assert len(chunks) >= 2
                 assert b"Hello" in chunks[0]
@@ -162,23 +164,23 @@ class TestEngineManager:
         with patch("app.inference.engine.SamplingParams") as mock_sampling:
             mock_params = MagicMock()
             mock_sampling.return_value = mock_params
-            
+
             result = engine_manager._build_sampling_params(
                 max_tokens=100,
                 temperature=0.8,
                 top_p=0.95,
                 top_k=40,
                 stop=["<|endoftext|>"],
-                repetition_penalty=1.1
+                repetition_penalty=1.1,
             )
-            
+
             mock_sampling.assert_called_once_with(
                 temperature=0.8,
                 top_p=0.95,
                 top_k=40,
                 max_tokens=100,
                 stop=["<|endoftext|>"],
-                repetition_penalty=1.1
+                repetition_penalty=1.1,
             )
             assert result is mock_params
 
@@ -190,9 +192,9 @@ class TestEngineManager:
                 top_p=0.95,
                 top_k=40,
                 stop=None,
-                repetition_penalty=1.1
+                repetition_penalty=1.1,
             )
-            
+
             # Ensure stop=None is passed as None to SamplingParams
             mock_sampling.assert_called_once()
             call_kwargs = mock_sampling.call_args[1]

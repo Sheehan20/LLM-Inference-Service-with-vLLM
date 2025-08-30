@@ -1,9 +1,10 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-from app.main import app
-from app.config import Settings
+
 from app.inference.engine import EngineManager
+from app.main import app
 
 
 @pytest.fixture
@@ -19,14 +20,14 @@ def mock_engine_manager():
         "num_prompt_tokens": 5,
         "num_generated_tokens": 3,
         "finish_reason": "stop",
-        "latency_ms": 100
+        "latency_ms": 100,
     }
-    
+
     async def mock_stream():
         yield b'data: {"delta": "Test"}\n\n'
         yield b'data: {"delta": " response"}\n\n'
         yield b'data: {"event": "end", "generated_chars": 13}\n\n'
-    
+
     manager.stream_text.return_value = mock_stream()
     return manager
 
@@ -38,16 +39,11 @@ class TestMainEndpoints:
         assert response.json() == {"status": "ok"}
 
     def test_generate_success(self, client, mock_engine_manager):
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
             response = client.post(
-                "/v1/generate",
-                json={
-                    "prompt": "Test prompt",
-                    "max_tokens": 50,
-                    "temperature": 0.7
-                }
+                "/v1/generate", json={"prompt": "Test prompt", "max_tokens": 50, "temperature": 0.7}
             )
-            
+
         assert response.status_code == 200
         data = response.json()
         assert data["text"] == "Test response"
@@ -62,7 +58,7 @@ class TestMainEndpoints:
             json={
                 "prompt": "Test prompt",
                 "max_tokens": -1,  # Invalid
-            }
+            },
         )
         assert response.status_code == 422  # Validation error
 
@@ -71,39 +67,28 @@ class TestMainEndpoints:
             "/v1/generate",
             json={
                 "max_tokens": 50,
-            }
+            },
         )
         assert response.status_code == 422  # Validation error
 
     def test_generate_engine_error(self, client, mock_engine_manager):
         mock_engine_manager.generate_text.side_effect = RuntimeError("Engine error")
-        
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
-            response = client.post(
-                "/v1/generate",
-                json={
-                    "prompt": "Test prompt",
-                    "max_tokens": 50
-                }
-            )
-            
+
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
+            response = client.post("/v1/generate", json={"prompt": "Test prompt", "max_tokens": 50})
+
         assert response.status_code == 500
         assert "error" in response.json()
 
     def test_stream_success(self, client, mock_engine_manager):
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
             response = client.post(
-                "/v1/stream",
-                json={
-                    "prompt": "Test prompt",
-                    "max_tokens": 50,
-                    "stream": True
-                }
+                "/v1/stream", json={"prompt": "Test prompt", "max_tokens": 50, "stream": True}
             )
-            
+
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        
+
         # Check that we get streaming response
         content = response.content.decode()
         assert "Test" in content
@@ -114,19 +99,14 @@ class TestMainEndpoints:
         async def mock_stream_error():
             yield b'data: {"delta": "Test"}\n\n'
             raise RuntimeError("Stream error")
-        
+
         mock_engine_manager.stream_text.return_value = mock_stream_error()
-        
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
+
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
             response = client.post(
-                "/v1/stream",
-                json={
-                    "prompt": "Test prompt",
-                    "max_tokens": 50,
-                    "stream": True
-                }
+                "/v1/stream", json={"prompt": "Test prompt", "max_tokens": 50, "stream": True}
             )
-            
+
         assert response.status_code == 200
         content = response.content.decode()
         assert "stream failed" in content
@@ -140,14 +120,9 @@ class TestMainEndpoints:
 
 class TestRequestModels:
     def test_generate_request_defaults(self, client, mock_engine_manager):
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
-            response = client.post(
-                "/v1/generate",
-                json={
-                    "prompt": "Test prompt"
-                }
-            )
-            
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
+            response = client.post("/v1/generate", json={"prompt": "Test prompt"})
+
         assert response.status_code == 200
         # Verify defaults were applied by checking the call
         mock_engine_manager.generate_text.assert_called_once()
@@ -157,7 +132,7 @@ class TestRequestModels:
         assert call_kwargs["top_p"] == 1.0  # Default
 
     def test_generate_request_custom_params(self, client, mock_engine_manager):
-        with patch.object(app.state, 'engine_manager', mock_engine_manager):
+        with patch.object(app.state, "engine_manager", mock_engine_manager):
             response = client.post(
                 "/v1/generate",
                 json={
@@ -167,10 +142,10 @@ class TestRequestModels:
                     "top_p": 0.9,
                     "top_k": 40,
                     "stop": ["<|end|>"],
-                    "repetition_penalty": 1.1
-                }
+                    "repetition_penalty": 1.1,
+                },
             )
-            
+
         assert response.status_code == 200
         call_kwargs = mock_engine_manager.generate_text.call_args.kwargs
         assert call_kwargs["max_tokens"] == 200

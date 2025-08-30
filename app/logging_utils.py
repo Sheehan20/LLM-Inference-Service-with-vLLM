@@ -29,9 +29,14 @@ def configure_logging(level: str = "INFO") -> structlog.stdlib.BoundLogger:
     root_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(level=root_level, format="%(message)s", stream=sys.stdout)
 
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "gunicorn", "gunicorn.error", "gunicorn.access"):
+    for name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "gunicorn",
+        "gunicorn.error",
+        "gunicorn.access",
+    ):
         logging.getLogger(name).setLevel(root_level)
 
     return structlog.get_logger()
-
-
